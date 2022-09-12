@@ -10,28 +10,38 @@ namespace SysbotMemoryViewer
     public class Searcher
     {
         public IValueComparison Comparer { get; set; }
-        public List<ISearchHashmap> Stack { get; private set; } = new();
+        public ISearchHashmap RootComparison { get; private set; } = default!;
+        public List<MemoryDiff> Stack { get; private set; } = new();
 
-        private ProgressBar progressBar;
+        private readonly ProgressBar progressBar;
 
-        public Searcher(IValueComparison c, ProgressBar pb) 
+        private readonly string rootMemdiffPath;
+        private int idx = 0;
+        private int NextFileNameIndex { get => ++idx; }
+
+        public Searcher(IValueComparison c, ProgressBar pb, string pathRoot) 
         { 
             Comparer = c;
             progressBar = pb;
+            rootMemdiffPath = pathRoot;
+
+            if (!Directory.Exists(rootMemdiffPath))
+                Directory.CreateDirectory(rootMemdiffPath);
         }
 
         public void InitialiseStack()
         {
+            RootComparison = default!;
             Stack.Clear();
         }
 
-        public void InitialiseStack(SearchFile sf)
+        public void InitialiseStack(ISearchHashmap sf)
         {
             Stack.Clear();
-            Stack.Add(sf);
+            RootComparison = sf;
         }
 
-        public ISearchHashmap? UndoLastStack()
+        public MemoryDiff? UndoLastStack()
         {
             if (Stack.Count <= 1)
                 return null;
@@ -39,109 +49,34 @@ namespace SysbotMemoryViewer
             return GetLastStack();
         }
 
-        public void AddToStack(ISearchHashmap sh)
-        {
-            Stack.Add(sh);
-        }
+        public void AddToStack(MemoryDiff sh) => Stack.Add(sh);
 
-        public ISearchHashmap GetLastStack() => Stack[^1];
+        public MemoryDiff GetLastStack() => Stack[^1];
 
-        #region MultipleMaps
+        public MemoryDiff Compare(ISearchHashmap old, ISearchHashmap @new, SearchType st) => 
+            MemoryDiff.GenerateMemoryDiff(rootMemdiffPath, GetNextDiffFilename(), progressBar, old, @new, SearchTypeToComparer(st));
 
-        public SearchBlock CompareU8(ISearchHashmap a, ISearchHashmap b) => doValueSearch(a, b, 1, Comparer.CompareU8Array);
-        public SearchBlock CompareU16(ISearchHashmap a, ISearchHashmap b) => doValueSearch(a, b, 2, Comparer.CompareU16);
-        public SearchBlock CompareU32(ISearchHashmap a, ISearchHashmap b) => doValueSearch(a, b, 4, Comparer.CompareU32);
-        public SearchBlock CompareU64(ISearchHashmap a, ISearchHashmap b) => doValueSearch(a, b, 8, Comparer.CompareU64);
-        public SearchBlock CompareFlt(ISearchHashmap a, ISearchHashmap b) => doValueSearch(a, b, 4, Comparer.CompareFloat);
-        public SearchBlock CompareDbl(ISearchHashmap a, ISearchHashmap b) => doValueSearch(a, b, 8, Comparer.CompareDouble);
+        public MemoryDiff Compare(ISearchHashmap a, byte[] bytes, SearchType st) =>
+            MemoryDiff.GenerateMemoryDiff(rootMemdiffPath, GetNextDiffFilename(), progressBar, a, bytes, SearchTypeToComparer(st));
 
-        private SearchBlock doValueSearch(ISearchHashmap a, ISearchHashmap b, int size, Func<byte[], byte[], bool> comparer)
-        {
-            Dictionary<ulong, byte[]> searchMap = new();
-            ISearchHashmap smaller = a.ByteSize > b.ByteSize ? b : a;
-            ISearchHashmap bigger = a.ByteSize > b.ByteSize ? a : b;
+        public MemoryDiff Compare(MemoryDiff old, MemoryDiff @new, SearchType st) =>
+            MemoryDiff.GenerateMemoryDiff(rootMemdiffPath, GetNextDiffFilename(), progressBar, old, @new, SearchTypeToComparer(st));
 
-            for (int i = 0; i < smaller.SearcheableRanges.Count; ++i)
+        public MemoryDiff Compare(MemoryDiff a, byte[] bytes, SearchType st) =>
+            MemoryDiff.GenerateMemoryDiff(rootMemdiffPath, GetNextDiffFilename(), progressBar, a, bytes, SearchTypeToComparer(st));
+
+        private string GetNextDiffFilename() => $"diff{NextFileNameIndex}";
+
+        private Func<byte[], byte[], bool> SearchTypeToComparer(SearchType st) =>
+            st switch
             {
-                var searchRange = smaller.SearcheableRanges[i];
-                var searchSize = searchRange.End - searchRange.Start;
-
-                progressBar.Minimum = 0;
-                progressBar.Maximum = 100;
-                progressBar.Value = 0;
-                progressBar.Step = 1;
-
-                var pc1 = searchSize / 100; 
-
-                for (ulong j = 0; j < searchSize; j += (ulong)size)
-                {
-                    var byteReq = new SearchRange() { Start = searchRange.Start + j, End = searchRange.Start + j + (ulong)size };
-                    var sr = bigger.GetIsSearcheableRange(byteReq);
-                    if (sr != null)
-                    {
-                        var srV = sr.Value;
-                        var aB = smaller.GetBytesOfAddress(srV.Start);
-                        var bB = bigger.GetBytesOfAddress(srV.Start);
-                        if (aB != null && bB != null && comparer(aB, bB))
-                            searchMap.Add(srV.Start, aB);
-                    }
-
-                    if (j % pc1 == 0)
-                    {
-                        progressBar.PerformStep();
-                        GC.Collect();
-                    }
-                }
-            }
-
-            return new SearchBlock(searchMap, size);
-        }
-
-        #endregion
-
-        #region SingleFixedValue
-
-        public SearchBlock CompareU8(ISearchHashmap a, byte[] bytes) => doValueSearchFixed(a, bytes, Comparer.CompareU8Array);
-        public SearchBlock CompareU16(ISearchHashmap a, byte[] bytes) => doValueSearchFixed(a, bytes, Comparer.CompareU16);
-        public SearchBlock CompareU32(ISearchHashmap a, byte[] bytes) => doValueSearchFixed(a, bytes, Comparer.CompareU32);
-        public SearchBlock CompareU64(ISearchHashmap a, byte[] bytes) => doValueSearchFixed(a, bytes, Comparer.CompareU64);
-        public SearchBlock CompareFlt(ISearchHashmap a, byte[] bytes) => doValueSearchFixed(a, bytes, Comparer.CompareFloat);
-        public SearchBlock CompareDbl(ISearchHashmap a, byte[] bytes) => doValueSearchFixed(a, bytes, Comparer.CompareDouble);
-
-        public SearchBlock doValueSearchFixed(ISearchHashmap a, byte[] bytes, Func<byte[], byte[], bool> comparer)
-        {
-            Dictionary<ulong, byte[]> searchMap = new();
-
-            for (int i = 0; i < a.SearcheableRanges.Count; ++i)
-            {
-                var range = a.SearcheableRanges[i];
-
-                var searchSize = range.End - range.Start;
-
-                progressBar.Minimum = 0;
-                progressBar.Maximum = 100;
-                progressBar.Value = 0;
-                progressBar.Step = 1;
-
-                var pc1 = searchSize / 100;
-
-                for (ulong j = range.Start; j < range.End; j += (ulong)bytes.Length)
-                {
-                    var bts = a.GetBytesOfAddress(j);
-                    if (bts != null && comparer(bts, bytes))
-                        searchMap.Add(j, bts);
-
-                    if (j % pc1 == 0)
-                    {
-                        progressBar.PerformStep();
-                        GC.Collect();
-                    }
-                }
-            }
-
-            return new SearchBlock(searchMap, bytes.Length);
-        }
-
-        #endregion
+                SearchType.U8 => Comparer.CompareU8Array,
+                SearchType.U16 => Comparer.CompareU16,
+                SearchType.U32 => Comparer.CompareU32,
+                SearchType.U64 => Comparer.CompareU64,
+                SearchType.FLT => Comparer.CompareFloat,
+                SearchType.DBL => Comparer.CompareDouble,
+                _ => Comparer.CompareU32,
+            };
     }
 }

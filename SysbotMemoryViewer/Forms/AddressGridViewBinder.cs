@@ -9,53 +9,45 @@ namespace SysbotMemoryViewer
 {
     public static class AddressGridViewBinder
     {
-        public static void BindData(DataGridView view, ISearchHashmap? map, SearchType st, int maxPerPage, int page)
+        public static void BindData(DataGridView view, MemoryDiff? diff, SearchType st, int maxPerPage, int page)
         {
-            view.ColumnCount = 1;
+            view.ColumnCount = 0;
             view.RowCount = 1;
 
-            if (map is not SearchBlock sb)
-            {
-                view.Name = "No reason to show unfiltered file data.";
-                return;
-            }
-
-            if (sb.AddressValues.Count == 0)
+            if (diff == null || diff.Size == 0)
             {
                 view.Name = "No matches.";
                 return;
             }
 
             var startIndex = page * maxPerPage;
-            if (sb.AddressValues.Count < startIndex)
-            {
-                view.Name = "This is the beyond realm.";
-                return;
-            }
-
-            var endIndex = Math.Min(sb.AddressValues.Count, startIndex + maxPerPage);
-            var nRange = sb.AddressValues.Skip(startIndex).Take(endIndex - startIndex).ToDictionary(k => k.Key, v => v.Value);
+            diff.SetPointer(startIndex);
 
             view.Name = "view";
             view.ColumnCount = 2;
             view.Columns[0].Name = "Address";
             view.Columns[1].Name = "Value";
 
-            foreach(var v in nRange)
+            var kvp = diff.ReadNext();
+            int ct = 0;
+            while (kvp.HasValue && ct < maxPerPage)
             {
-                string addr = v.Key.ToString("X16");
-                string dValue;
-                switch (st)
+                var v = kvp.Value;
+                string addr = v.Key.ToString("X10");
+                string dValue = st switch
                 {
-                    case SearchType.U8: dValue = v.Value[0].ToString("X16"); break;
-                    case SearchType.U16: dValue = BitConverter.ToUInt16(v.Value).ToString("X16"); break;
-                    case SearchType.U32: dValue = BitConverter.ToUInt32(v.Value).ToString("X16"); break;
-                    case SearchType.U64: dValue = BitConverter.ToUInt64(v.Value).ToString("X16"); break;
-                    case SearchType.FLT: dValue = BitConverter.ToSingle(v.Value).ToString(); break;
-                    case SearchType.DBL: dValue = BitConverter.ToDouble(v.Value).ToString(); break;
-                    default: dValue = BitConverter.ToUInt64(v.Value).ToString("X16"); break;
-                }
+                    SearchType.U8 => v.Value[0].ToString("X2"),
+                    SearchType.U16 => BitConverter.ToUInt16(v.Value).ToString("X4"),
+                    SearchType.U32 => BitConverter.ToUInt32(v.Value).ToString("X8"),
+                    SearchType.U64 => BitConverter.ToUInt64(v.Value).ToString("X16"),
+                    SearchType.FLT => BitConverter.ToSingle(v.Value).ToString(),
+                    SearchType.DBL => BitConverter.ToDouble(v.Value).ToString(),
+                    _ => BitConverter.ToUInt64(v.Value).ToString("X16"),
+                };
                 view.Rows.Add(new string[2] { addr, dValue });
+
+                ct++;
+                kvp = diff.ReadNext();
             }
         }
     }

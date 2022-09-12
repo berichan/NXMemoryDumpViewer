@@ -1,7 +1,10 @@
+using System.Windows.Forms;
+
 namespace SysbotMemoryViewer
 {
-    public partial class Form1 : Form
+    public partial class MemDumpView : Form
     {
+        private readonly string pathTemp = @"D:/tmp";
         private ConnectionInterface Connection = default!;
         private Searcher Search = default!;
 
@@ -10,11 +13,11 @@ namespace SysbotMemoryViewer
         private SearchConditionDirection Direction = SearchConditionDirection.Known;
         private SearchType InputType = SearchType.U64;
 
-        public Form1()
+        public MemDumpView()
         {
             InitializeComponent();
 
-            Search = new Searcher(Comparer, PB_Main);
+            Search = new Searcher(Comparer, PB_Main, pathTemp);
 
             CB_Type.DataSource = Enum.GetValues(typeof(SearchType));
             CB_Type.SelectedIndexChanged += (o, e) => UpdateType();
@@ -44,7 +47,7 @@ namespace SysbotMemoryViewer
 
         private void BTN_Undo_Click(object sender, EventArgs e)
         {
-            if (Search.Stack.Count < 2)
+            if (Search.Stack.Count < 1)
             {
                 MessageBox.Show("Nothing to undo!");
                 return;
@@ -62,7 +65,24 @@ namespace SysbotMemoryViewer
 
         private void BTN_Search_Click(object sender, EventArgs e)
         {
-            if (Search.Stack.Count == 0)
+            string? nPath = null;
+            if ((ModifierKeys & Keys.Control) != 0)
+            {
+                var fileDia = new OpenFileDialog()
+                {
+                    FileName = "Select a file",
+                    Title = "Open dump file"
+                };
+
+                if (fileDia.ShowDialog() == DialogResult.OK)
+                {
+                    nPath = Path.ChangeExtension(fileDia.FileName, null);
+                }
+                else
+                    return;
+            }
+
+            if (Search.Stack.Count == 0 && Search.RootComparison == default)
             {
                 if (Direction == SearchConditionDirection.Previous)
                 {
@@ -71,7 +91,7 @@ namespace SysbotMemoryViewer
                 }
 
                 // init with file
-                var dmp = Connection.Connection.GetDump().TrimEnd('\0').TrimEnd('\n');
+                var dmp = nPath == null ? Connection.Connection.GetDump().TrimEnd('\0').TrimEnd('\n') : nPath;
                 var sf = new SearchFile(dmp, GetValueSize());
                 Search.InitialiseStack(sf);
                 if (Direction == SearchConditionDirection.Known)
@@ -80,47 +100,36 @@ namespace SysbotMemoryViewer
                 return;
             }
 
-            if (Search.Stack.Count == 1 && Direction == SearchConditionDirection.Previous && Search.GetLastStack() is SearchFile)
+            if (Search.RootComparison != default && Search.Stack.Count == 0 && Direction == SearchConditionDirection.Previous)
             {
                 // dump again
-                var dmp = Connection.Connection.GetDump().TrimEnd('\0').TrimEnd('\n');
+                var dmp = nPath == null ? Connection.Connection.GetDump().TrimEnd('\0').TrimEnd('\n') : nPath;
                 var sf = new SearchFile(dmp, GetValueSize());
-                DoCompare(sf);
+                DoCompareRoot(sf);
                 UpdateStackView();
                 return;
             }
 
             if (Direction == SearchConditionDirection.Previous || Direction == SearchConditionDirection.Known)
             {
-                // fetch all addresses
-                var addrMap = new Dictionary<ulong, int>();
-
-                if (Search.GetLastStack() is not SearchBlock last)
-                {
-                    MessageBox.Show("Too many file dumps!");
-                    return;
-                }
-
-                foreach (var addr in last.AddressValues)
-                    addrMap.Add(addr.Key, last.ValueSize);
-
-                var maps = Connection.Connection.ReadBytesAbsoluteMulti(addrMap);
+                var dmp = nPath == null ? Connection.Connection.GetDump().TrimEnd('\0').TrimEnd('\n') : nPath;
+                var sf = new SearchFile(dmp, GetValueSize());
 
                 // populate block
-                var blockMap = new Dictionary<ulong, byte[]>();
-                var keys = addrMap.Keys.ToArray();
-                for (int i = 0; i < addrMap.Count; ++i)
+                var memDiff = new MemoryDiff(pathTemp, "tmp", GetValueSize(), PB_Main);
+                var lastStack = Search.GetLastStack();
+                lastStack.ResetPointer();
+                var kvp = lastStack.ReadNext();
+                while (kvp.HasValue)
                 {
-                    int bStart = i * last.ValueSize;
-                    var bRange = maps[bStart..(bStart + last.ValueSize)];
-                    blockMap.Add(keys[i], bRange);
+                    memDiff.WriteNewDiff(kvp.Value.Key, sf.GetBytesOfAddress(kvp.Value.Key));
+                    kvp = lastStack.ReadNext();
                 }
-                var nBlock = new SearchBlock(blockMap, last.ValueSize);
 
                 if (Direction == SearchConditionDirection.Previous)
-                    DoCompare(nBlock);
+                    DoCompareStack(memDiff);
                 else
-                    DoNewCompare(GetCurrentInputValue(), nBlock);
+                    DoNewCompare(GetCurrentInputValue(), memDiff);
                 UpdateStackView();
                 return;
             }
@@ -139,44 +148,41 @@ namespace SysbotMemoryViewer
             };
         }
 
-        private void DoCompare(ISearchHashmap ish)
+        private void DoCompareRoot(ISearchHashmap ish)
         {
-            var lastIsh = Search.GetLastStack();
-            SearchBlock sb = InputType switch
-            {
-                SearchType.U8 => Search.CompareU8(ish, lastIsh),
-                SearchType.U16 => Search.CompareU16(ish, lastIsh),
-                SearchType.U32 => Search.CompareU32(ish, lastIsh),
-                SearchType.U64 => Search.CompareU64(ish, lastIsh),
-                SearchType.FLT => Search.CompareFlt(ish, lastIsh),
-                SearchType.DBL => Search.CompareDbl(ish, lastIsh),
-                // I guess
-                _ => Search.CompareU8(ish, lastIsh),
-            };
-            Search.AddToStack(sb);
+            var lastIsh = Search.RootComparison;
+            var memDiff = Search.Compare(lastIsh, ish, InputType);
+            Search.AddToStack(memDiff);
+            UpdateStackView();
+        }
+
+        private void DoCompareStack(MemoryDiff md)
+        {
+            var lastStack = Search.GetLastStack();
+            var memDiff = Search.Compare(lastStack, md, InputType);
+            Search.AddToStack(memDiff);
             UpdateStackView();
         }
 
         private void DoCompare(byte[] search)
         {
-            var lastIsh = Search.GetLastStack();
-            DoNewCompare(search, lastIsh);
+            if (Search.Stack.Count == 0)
+                DoNewCompare(search, Search.RootComparison);
+            else
+                DoNewCompare(search, Search.GetLastStack());
         }
 
         private void DoNewCompare(byte[] search, ISearchHashmap addrBlock)
         {
-            SearchBlock sb = InputType switch
-            {
-                SearchType.U8 => Search.CompareU8(addrBlock, search),
-                SearchType.U16 => Search.CompareU16(addrBlock, search),
-                SearchType.U32 => Search.CompareU32(addrBlock, search),
-                SearchType.U64 => Search.CompareU64(addrBlock, search),
-                SearchType.FLT => Search.CompareFlt(addrBlock, search),
-                SearchType.DBL => Search.CompareDbl(addrBlock, search),
-                // I guess
-                _ => Search.CompareU8(addrBlock, search),
-            };
-            Search.AddToStack(sb);
+            var memDiff = Search.Compare(addrBlock, search, InputType);
+            Search.AddToStack(memDiff);
+            UpdateStackView();
+        }
+
+        private void DoNewCompare(byte[] search, MemoryDiff md)
+        {
+            var memDiff = Search.Compare(md, search, InputType);
+            Search.AddToStack(memDiff);
             UpdateStackView();
         }
 

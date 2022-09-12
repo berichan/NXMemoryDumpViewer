@@ -1,6 +1,6 @@
 ﻿namespace SysbotMemoryViewer
 {
-    partial class Form1
+    partial class MemDumpView
     {
         /// <summary>
         ///  Required designer variable.
@@ -120,7 +120,6 @@
             this.GB_Search.TabIndex = 1;
             this.GB_Search.TabStop = false;
             this.GB_Search.Text = "Search";
-            this.GB_Search.Visible = false;
             // 
             // BTN_Restart
             // 
@@ -237,22 +236,22 @@
             // 
             // PB_Main
             // 
-            this.PB_Main.Location = new System.Drawing.Point(30, 397);
+            this.PB_Main.Location = new System.Drawing.Point(33, 386);
             this.PB_Main.Name = "PB_Main";
             this.PB_Main.Size = new System.Drawing.Size(719, 23);
             this.PB_Main.TabIndex = 3;
             // 
-            // Form1
+            // MemDumpView
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(800, 450);
+            this.ClientSize = new System.Drawing.Size(800, 436);
             this.Controls.Add(this.PB_Main);
             this.Controls.Add(this.DGV_Values);
             this.Controls.Add(this.GB_Search);
             this.Controls.Add(this.GB_Connection);
-            this.Name = "Form1";
-            this.Text = "Form1";
+            this.Name = "MemDumpView";
+            this.Text = "Memory Dump Viewer by Berichan";
             this.GB_Connection.ResumeLayout(false);
             this.GB_Connection.PerformLayout();
             this.GB_Search.ResumeLayout(false);
