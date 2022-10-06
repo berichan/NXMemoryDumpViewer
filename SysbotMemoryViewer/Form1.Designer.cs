@@ -169,6 +169,7 @@
             this.BTN_DecHex.TabIndex = 6;
             this.BTN_DecHex.Text = "Decimal > Hex";
             this.BTN_DecHex.UseVisualStyleBackColor = true;
+            this.BTN_DecHex.Click += new System.EventHandler(this.BTN_DecHex_Click);
             // 
             // NUD_SearchValue
             // 

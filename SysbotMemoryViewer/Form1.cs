@@ -218,5 +218,10 @@ namespace SysbotMemoryViewer
             var size = GetValueSize();
             NUD_SearchValue.Maximum = (decimal)(Math.Pow(256, size) - 1);
         }
+
+        private void BTN_DecHex_Click(object sender, EventArgs e)
+        {
+            NUD_SearchValue.Hexadecimal = !NUD_SearchValue.Hexadecimal;
+        }
     }
 }
